@@ -94,7 +94,7 @@ class CollegeStudent : Student {
 ```
 
 ## Parameterless constructors 
-Make sure your DataContract class has a parameterless constructor. By default, it should. However, if it is overriden by a non-parameterless constructor, you must explicitly declare the parameterless constructor. 
+Make sure your DataContract class has a parameterless constructor. By default, it should. However, if it is overriden by a non-parameterless constructor, you must explicitly declare the parameterless constructor. Without it, you may see: ```Grpc.Core.RpcException: "Failed to deserialize response message..."```
 
 ```csharp
 [DataContract]
@@ -138,6 +138,87 @@ class BoolResponse {
 }
 ```
 
+# Adding gRPC middle-ware for exceptions and logging 
+Exceptions thrown on the server-side will not be fully visible to the client. Instead, clients will throw a ```RpcException```. If you want to preserve the original exception, then there are some options. 
 
+### EnableDetailedErrors = true 
+Setting this config will append the original exception message to the ```RpcException``` thrown on the client-side. 
+```csharp 
+services.AddCodeFirstGrpc(config =>
+{
+    config.EnableDetailedErrors = true;
+    config.ResponseCompressionLevel = System.IO.Compression.CompressionLevel.Optimal;
+});
+```
+
+### Configure an interceptor for error-handling
+You can also configure a gRPC interceptor to catch server-side exceptions, serialize the exception metadata, and pack it into a custom ```RpcException```.
+
+Helpful references: 
+* [StackOverflow response](https://stackoverflow.com/questions/62823340/how-to-get-grpc-to-throw-the-original-exception-like-wcf-does/62944504#62944504)
+* [ASP Grpc Custom Error Handling](https://digitteck.com/dotnet/aspnetcore/asp-grpc-custom-error-handling/) 
+
+**Configure the interceptor:**
+```csharp 
+services.AddGrpc(options => 
+{
+    options.Interceptors.Add<GRPCInterceptor>();     
+});
+```
+
+**Bare-bones interceptor for logging:**
+```csharp 
+public class GRPCInterceptor : Interceptor
+{
+    private readonly ILogger logger;
+
+    public GRPCInterceptor(ILogger logger)
+    {
+        this.logger = logger;
+    }
+
+    public override async Task<TResponse> UnaryServerHandler<TRequest, TResponse>(TRequest request, ServerCallContext context, UnaryServerMethod<TRequest, TResponse> continuation)
+    {
+        logger.Debug($"starting call");
+
+        var response = await base.UnaryServerHandler(request, context, continuation);
+
+        logger.Debug($"finished call");
+
+        return response;
+    }
+}
+```
+
+**Interceptor for error-handling:**
+```csharp
+public override async Task<TResponse> UnaryServerHandler<TRequest, TResponse>(TRequest request, ServerCallContext context, UnaryServerMethod<TRequest, TResponse> continuation)
+{
+    TResponse response; 
+    try
+    {
+        response = await continuation(request, context);
+    } 
+     catch (Exception e) // Add your own exception handling logic 
+     {
+        if (e.Message != null)
+        {
+            throw ExtractRpcException(e.Message, e.Code); 
+        }
+        throw; 
+     }
+}
+
+public static RpcException ExtractRpcException(String exMessage, String code)
+{
+    var metadata = new Metadata
+    {
+        { "Code", code },
+        { "Message", message } 
+     };
+     return new RpcException(new Grpc.Core.Status(StatusCode.Internal, exMessage), metadata);
+}
+ ```
+ 
 # References
 * [protobuf-net repository](https://github.com/protobuf-net/protobuf-net) 
