@@ -133,7 +133,7 @@ interface IStudentService {
 
 [DataContract]
 class BoolResponse {
-   [DataMember(Order=1)]
+   [DataMember(Order = 1)]
    public bool Value; 
 }
 ```
